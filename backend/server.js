@@ -5,7 +5,7 @@ import jwt from "jsonwebtoken";
 
 const app = express();
 const PORT = 4000;
-const mongoURL = "mongodb://localhost:27017";
+const mongoURL = "mongodb://127.0.0.1:27017";
 const dbName = "quirknotes";
 
 // Connect to MongoDB
@@ -41,21 +41,21 @@ const COLLECTIONS = {
 app.post("/registerUser", express.json(), async (req, res) => {
     try {
       const { username, password } = req.body;
-  
+
       // Basic body request check
       if (!username || !password) {
         return res
           .status(400)
           .json({ error: "Username and password both needed to register." });
       }
-  
+
       // Checking if username does not already exist in database
       const userCollection = db.collection(COLLECTIONS.users);
       const existingUser = await userCollection.findOne({ username });
       if (existingUser) {
         return res.status(400).json({ error: "Username already exists." });
       }
-  
+
       // Creating hashed password (search up bcrypt online for more info)
       // and storing user info in database
       const hashedPassword = await bcrypt.hash(password, 10);
@@ -63,7 +63,7 @@ app.post("/registerUser", express.json(), async (req, res) => {
         username,
         password: hashedPassword,
       });
-  
+
       // Returning JSON Web Token (search JWT for more explanation)
       const token = jwt.sign({ username }, "secret-key", { expiresIn: "1h" });
       res.status(201).json({ response: "User registered successfully.", token });
@@ -76,22 +76,22 @@ app.post("/registerUser", express.json(), async (req, res) => {
 app.post("/loginUser", express.json(), async (req, res) => {
     try {
       const { username, password } = req.body;
-  
+
       // Basic body request check
       if (!username || !password) {
         return res
           .status(400)
           .json({ error: "Username and password both needed to login." });
       }
-  
+
       // Find username in database
       const userCollection = db.collection(COLLECTIONS.users);
       const user = await userCollection.findOne({ username });
-  
+
       // Validate user against hashed password in database
       if (user && (await bcrypt.compare(password, user.password))) {
         const token = jwt.sign({ username }, "secret-key", { expiresIn: "1h" });
-  
+
         // Send JSON Web Token to valid user
         res.json({ response: "User logged in succesfully.", token: token }); //Implicitly status 200
       } else {
@@ -112,14 +112,14 @@ app.post("/postNote", express.json(), async (req, res) => {
           .status(400)
           .json({ error: "Title and content are both required." });
       }
-  
+
       // Verify the JWT from the request headers
       const token = req.headers.authorization.split(" ")[1];
       jwt.verify(token, "secret-key", async (err, decoded) => {
         if (err) {
           return res.status(401).send("Unauthorized.");
         }
-  
+
         // Send note to database
         const collection = db.collection(COLLECTIONS.notes);
         const result = await collection.insertOne({
@@ -145,14 +145,14 @@ app.get("/getNote/:noteId", express.json(), async (req, res) => {
       if (!ObjectId.isValid(noteId)) {
         return res.status(400).json({ error: "Invalid note ID." });
       }
-  
+
       // Verify the JWT from the request headers
       const token = req.headers.authorization.split(" ")[1];
       jwt.verify(token, "secret-key", async (err, decoded) => {
         if (err) {
           return res.status(401).send("Unauthorized.");
         }
-  
+
         // Find note with given ID
         const collection = db.collection(COLLECTIONS.notes);
         const data = await collection.findOne({
@@ -169,4 +169,140 @@ app.get("/getNote/:noteId", express.json(), async (req, res) => {
     } catch (error) {
       res.status(500).json({ error: error.message });
     }
-  });
+});
+
+//getAllNotes
+app.get("/getAllNotes", async (req, res) => {
+
+  try {
+
+    const token = req.headers.authorization.split(" ")[1];
+
+    jwt.verify(token, "secret-key", async (err, decoded) => {
+
+      if (err) {
+        return res.status(401).send("Unauthorized.");
+      }
+
+      const collection = db.collection(COLLECTIONS.notes);
+
+      const data = await collection.find({
+        username: decoded.username
+      }).toArray();
+
+      res
+        .status(200)
+        .json({ response: data })
+
+    });
+
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+
+});
+
+app.delete("/deleteNote/:noteId", async (req, res) => {
+
+  try {
+
+    const noteId = req.params.noteId;
+
+    if (!ObjectId.isValid(noteId)) {
+      return res.status(400).json({ error: "Bad request, invalid noteID" });
+    }
+
+    const token = req.headers.authorization.split(" ")[1];
+
+    jwt.verify(token, "secret-key", async (err, decoded) => {
+
+      if (err) {
+        return res.status(401).send("Unauthorized.");
+      }
+
+      const collection = db.collection(COLLECTIONS.notes);
+
+      const data = await collection.findOneAndDelete({
+          username: decoded.username,
+          _id: new ObjectId(noteId),
+      });
+
+      if (!data) {
+        return res
+          .status(404)
+          .json({ error: "Unable to find note with given ID." });
+      }
+
+      res
+        .status(200)
+        .json({response: `Document with ID ${noteId} properly deleted`})
+
+    });
+
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+
+});
+
+app.patch("/editNote/:noteId", express.json(), async (req, res) => {
+
+  try {
+
+    const noteId = req.params.noteId;
+
+    if (!ObjectId.isValid(noteId)) {
+      return res.status(400).json({ error: "Bad request, invalid noteID" });
+    }
+
+    const { title, content } = req.body;
+
+    if (!title && !content) {
+      return res
+        .status(400)
+        .json({ error: "Title or content is required." });
+    }
+
+    const token = req.headers.authorization.split(" ")[1];
+
+    jwt.verify(token, "secret-key", async (err, decoded) => {
+
+      if (err) {
+        return res.status(401).send("Unauthorized.");
+      }
+
+      const collection = db.collection(COLLECTIONS.notes);
+
+      const update = {}
+
+      if (title) update["title"] = title;
+      if (content) update["content"] = content;
+
+      const data = await collection.findOneAndUpdate(
+        {
+          username: decoded.username,
+          _id: new ObjectId(noteId),
+        },
+        {
+          $set: update
+        }
+      );
+
+      if (!data) {
+        return res
+          .status(404)
+          .json({ error: "Unable to find note with given ID." });
+      }
+
+      res
+        .status(200)
+        .json({response: `Document with ID ${noteId} properly updated`})
+
+    });
+
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+
+});
+
